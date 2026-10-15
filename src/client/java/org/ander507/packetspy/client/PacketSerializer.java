@@ -16,19 +16,22 @@ import java.util.Map;
 import java.util.Optional;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
+import net.minecraft.network.protocol.Packet;
 
 /**
  * Turns any packet into JSON by reading its fields with reflection. Works the same on every Minecraft
  * version, so there is no per-packet code that can break when Mojang changes a packet.
  * Output is capped (depth, list length, string length, total size) so huge packets such as
- * registries or tags can't flood the web UI.
+ * registries or tags can't flood the web UI. Deep inspection raises the caps so bundles, entity
+ * metadata and other nested data show in full, at the cost of much bigger messages.
  */
 @Environment(EnvType.CLIENT)
 final class PacketSerializer {
-    private static final int MAX_DEPTH = 3;
-    private static final int MAX_ITEMS = 32;
-    private static final int MAX_STRING = 2000;
-    private static final int MAX_NODES = 2000;
+    private static final Limits NORMAL = new Limits(3, 32, 2000, 2000);
+    private static final Limits DEEP = new Limits(8, 256, 8000, 20000);
+
+    private record Limits(int depth, int items, int string, int nodes) {
+    }
 
     private static final ClassValue<Field[]> FIELDS = new ClassValue<>() {
         @Override
@@ -60,13 +63,15 @@ final class PacketSerializer {
         }
     };
 
+    private final Limits limits;
     private int nodes;
 
-    private PacketSerializer() {
+    private PacketSerializer(Limits limits) {
+        this.limits = limits;
     }
 
     static JsonObject serialize(Object packet) {
-        return new PacketSerializer().object(packet, 0);
+        return new PacketSerializer(PacketSpyConfig.deepInspection ? DEEP : NORMAL).object(packet, 0);
     }
 
     private JsonObject object(Object obj, int depth) {
@@ -86,7 +91,7 @@ final class PacketSerializer {
     }
 
     private JsonElement value(Object value, int depth) {
-        if (++nodes > MAX_NODES) return new JsonPrimitive("<truncated>");
+        if (++nodes > limits.nodes()) return new JsonPrimitive("<truncated>");
         if (value == null) return JsonNull.INSTANCE;
         if (value instanceof String s) return new JsonPrimitive(truncate(s));
         if (value instanceof Integer i && i == -999) return new JsonPrimitive("-999 (Outside Inventory)");
@@ -97,6 +102,8 @@ final class PacketSerializer {
         if (value instanceof Optional<?> o) return o.isPresent() ? value(o.get(), depth) : JsonNull.INSTANCE;
 
         Class<?> type = value.getClass();
+        // Packets inside a bundle often have a toString() that is only an identity hash, so read their fields
+        if (value instanceof Packet<?> && depth < limits.depth()) return object(value, depth);
         if (type.isArray()) return array(value, depth);
         if (value instanceof Map<?, ?> map) return map(map, depth);
         if (value instanceof Collection<?> c) return items(c.iterator(), c.size(), depth);
@@ -106,7 +113,7 @@ final class PacketSerializer {
             return new JsonPrimitive("<lambda>"); // e.g. codecs/serializers, nothing useful to show
         }
         boolean opaque = type.isAnonymousClass() || type.getName().startsWith("java.");
-        if (depth < MAX_DEPTH && !opaque && (type.isRecord() || !HAS_TO_STRING.get(type))) {
+        if (depth < limits.depth() && !opaque && (type.isRecord() || !HAS_TO_STRING.get(type))) {
             return object(value, depth);
         }
         return new JsonPrimitive(text(value));
@@ -115,29 +122,29 @@ final class PacketSerializer {
     private JsonElement array(Object array, int depth) {
         int length = Array.getLength(array);
         Class<?> component = array.getClass().getComponentType();
-        if (component == byte.class || depth >= MAX_DEPTH || (component.isPrimitive() && length > MAX_ITEMS)) {
+        if (component == byte.class || depth >= limits.depth() || (component.isPrimitive() && length > limits.items())) {
             return new JsonPrimitive(component.getSimpleName() + "[" + length + "]");
         }
         JsonArray json = new JsonArray();
-        for (int i = 0; i < Math.min(length, MAX_ITEMS); i++) {
+        for (int i = 0; i < Math.min(length, limits.items()); i++) {
             json.add(value(Array.get(array, i), depth + 1));
         }
-        if (length > MAX_ITEMS) json.add("... (" + (length - MAX_ITEMS) + " more)");
+        if (length > limits.items()) json.add("... (" + (length - limits.items()) + " more)");
         return json;
     }
 
     private JsonElement items(Iterator<?> it, int size, int depth) {
-        if (depth >= MAX_DEPTH) {
+        if (depth >= limits.depth()) {
             return new JsonPrimitive("<" + (size >= 0 ? size + " items" : "items") + ">");
         }
         JsonArray json = new JsonArray();
         int count = 0;
-        while (count < MAX_ITEMS && it.hasNext()) {
+        while (count < limits.items() && it.hasNext()) {
             json.add(value(it.next(), depth + 1));
             count++;
         }
-        if (size > MAX_ITEMS) {
-            json.add("... (" + (size - MAX_ITEMS) + " more)");
+        if (size > limits.items()) {
+            json.add("... (" + (size - limits.items()) + " more)");
         } else if (size < 0 && it.hasNext()) {
             json.add("... (more)");
         }
@@ -145,14 +152,14 @@ final class PacketSerializer {
     }
 
     private JsonElement map(Map<?, ?> map, int depth) {
-        if (depth >= MAX_DEPTH) {
+        if (depth >= limits.depth()) {
             return new JsonPrimitive("<" + map.size() + " entries>");
         }
         JsonObject json = new JsonObject();
         int count = 0;
         for (Map.Entry<?, ?> entry : map.entrySet()) {
-            if (count++ >= MAX_ITEMS) {
-                json.addProperty("...", (map.size() - MAX_ITEMS) + " more");
+            if (count++ >= limits.items()) {
+                json.addProperty("...", (map.size() - limits.items()) + " more");
                 break;
             }
             json.add(text(entry.getKey()), value(entry.getValue(), depth + 1));
@@ -160,7 +167,7 @@ final class PacketSerializer {
         return json;
     }
 
-    private static String text(Object value) {
+    private String text(Object value) {
         String s;
         try {
             s = String.valueOf(value);
@@ -170,7 +177,7 @@ final class PacketSerializer {
         return NameTable.remap(truncate(s));
     }
 
-    private static String truncate(String s) {
-        return s.length() <= MAX_STRING ? s : s.substring(0, MAX_STRING) + "... (" + s.length() + " chars)";
+    private String truncate(String s) {
+        return s.length() <= limits.string() ? s : s.substring(0, limits.string()) + "... (" + s.length() + " chars)";
     }
 }

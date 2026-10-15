@@ -23,6 +23,8 @@ public class PacketSpyConfig {
     // Read on the network thread, changed from the WebSocket thread
     public static final List<String> silencedPackets = new CopyOnWriteArrayList<>();
     public static volatile boolean logPlayerMovementPackets = true;
+    /** Serialize nested data (bundles, entity metadata) in full. Off by default because it makes busy servers send far more data. */
+    public static volatile boolean deepInspection = false;
     public static int httpServerPort = 8888;
     public static int webSocketPort = 8887;
     /** When false the web UI is only reachable from this PC. Set to true to open it from a phone on the same network. */
@@ -38,6 +40,7 @@ public class PacketSpyConfig {
                         silencedPackets.addAll(data.silencedPackets);
                     }
                     logPlayerMovementPackets = data.logPlayerMovementPackets;
+                    deepInspection = data.deepInspection;
                     httpServerPort = validPort(data.httpServerPort, 8888);
                     webSocketPort = validPort(data.webSocketPort, 8887);
                     allowLanAccess = data.allowLanAccess;
@@ -57,6 +60,7 @@ public class PacketSpyConfig {
             ConfigData data = new ConfigData();
             data.silencedPackets = new ArrayList<>(silencedPackets);
             data.logPlayerMovementPackets = logPlayerMovementPackets;
+            data.deepInspection = deepInspection;
             data.httpServerPort = httpServerPort;
             data.webSocketPort = webSocketPort;
             data.allowLanAccess = allowLanAccess;
@@ -73,6 +77,7 @@ public class PacketSpyConfig {
     private static class ConfigData {
         List<String> silencedPackets = new ArrayList<>();
         boolean logPlayerMovementPackets = true;
+        boolean deepInspection = false;
         int httpServerPort = 8888;
         int webSocketPort = 8887;
         boolean allowLanAccess = false;

@@ -237,6 +237,12 @@ public class PacketSpyServer extends WebSocketServer {
                         changed = true;
                     }
                 }
+                case "toggleDeepInspection" -> {
+                    if (json.has("value")) {
+                        PacketSpyConfig.deepInspection = json.get("value").getAsBoolean();
+                        changed = true;
+                    }
+                }
                 case "silencePacket" -> {
                     if (json.has("packetName")) {
                         String packetName = json.get("packetName").getAsString().trim();
@@ -266,6 +272,7 @@ public class PacketSpyServer extends WebSocketServer {
         JsonObject state = new JsonObject();
         state.addProperty("type", "config");
         state.addProperty("logPlayerMovementPackets", PacketSpyConfig.logPlayerMovementPackets);
+        state.addProperty("deepInspection", PacketSpyConfig.deepInspection);
         state.add("silencedPackets", GSON.toJsonTree(PacketSpyConfig.silencedPackets));
         return GSON.toJson(state);
     }

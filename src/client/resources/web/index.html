@@ -421,6 +421,10 @@ button, input { font: inherit; color: inherit; }
         <input type="checkbox" id="s-move" checked>
     </label>
     <label class="switch">
+        <span>Deep inspection<small>Show nested data in full, like bundles and entity metadata. Much more data on busy servers</small></span>
+        <input type="checkbox" id="s-deep">
+    </label>
+    <label class="switch">
         <span>Group repeats<small>Merge identical packets in a row into one line</small></span>
         <input type="checkbox" id="s-stack" checked>
     </label>
@@ -466,7 +470,7 @@ const els = {
     details: $('details'), dName: $('d-name'), dMeta: $('d-meta'), dClass: $('d-class'), dJson: $('d-json'),
     dCopy: $('d-copy'), dMute: $('d-mute'), dClose: $('d-close'),
     count: $('count'), note: $('note'),
-    sMove: $('s-move'), sStack: $('s-stack'), sTheme: $('s-theme'), muteForm: $('mute-form'), muteInput: $('mute-input'), muted: $('muted'),
+    sMove: $('s-move'), sDeep: $('s-deep'), sStack: $('s-stack'), sTheme: $('s-theme'), muteForm: $('mute-form'), muteInput: $('mute-input'), muted: $('muted'),
 };
 
 const state = {
@@ -477,6 +481,7 @@ const state = {
     paused: false,
     stack: true,
     movement: true,
+    deep: false,
     muted: [],
     filter: { text: '', regex: null, cat: 'all', in: true, out: true },
     selected: null,
@@ -529,6 +534,8 @@ function send(message) {
 function handle(m) {
     if (m.type === 'config') {
         state.movement = !!m.logPlayerMovementPackets;
+        state.deep = !!m.deepInspection;
+        els.sDeep.checked = state.deep;
         state.muted = Array.isArray(m.silencedPackets) ? m.silencedPackets : [];
         els.sMove.checked = state.movement;
         renderMuted();
@@ -1039,6 +1046,9 @@ document.addEventListener('click', (e) => {
 
 els.sMove.addEventListener('change', () => {
     if (!send({ action: 'toggleMovement', value: els.sMove.checked })) els.sMove.checked = state.movement;
+});
+els.sDeep.addEventListener('change', () => {
+    if (!send({ action: 'toggleDeepInspection', value: els.sDeep.checked })) els.sDeep.checked = state.deep;
 });
 els.sStack.addEventListener('change', () => {
     state.stack = els.sStack.checked;
